@@ -1,0 +1,37 @@
+NAME		:Jayanth Sivakumar
+B-NUMBER	:B00615297
+B-MAIL		:jsivaku1@remote.cs.binghamton.edu
+
+The code has been tested in the remote and the implementation of COW is working fine. 
+
+
+TEST OUTPUT:
+
+----- Test case 1 -----
+[prnt] - before fork - free-frames 56772
+[prnt] - frames consumed when COW enabled should be less than when COW is disabled - free-frames 56704
+[chld] - frames consumed when COW enbled should be less than when COW is disabled - free-frames 56704
+[prnt] - after wait - free frames change to orignial number - free-frames 56772
+
+----- Test case 2 -----
+[prnt] - before fork - free-frames 56772
+[prnt] - free-frames 56704
+[chld] - free-frames 56704
+[chld] - acess global_v1 without modify - global_var = 0 - free frames should remain unchanged - free-frames 56704
+[prnt] - after wait - free frames change to orignial number - free-frames 56772
+
+----- Test case 3 -----
+[prnt] - before fork - free-frames 56772
+[prnt] - free-frames 56704
+[prnt] - acess global_v1 without modify - global_var = 0 - free frames should remain unchanged - free-frames 56704
+[chld] - free-frames 56704
+[chld] - acess global_v1 and modify - global_var = 100 - free frames should decrease by 1 free-frames 56703
+[prnt] - after wait - free frames change to orignial number - free-frames 56772
+
+----- Test case 4 -----
+[prnt] - before fork - free-frames 56772
+[prnt] - free-frames 56704
+[prnt] - modified one element in the 1st page - global_array[0 = 111 - free frames should decrease by 1 - free-frames 56703
+[chld] - free-frames 56703
+[chld] - modified two elements in the 1st and the 2nd page - global_array[0] = 222 - free frames should furhter decrease by 1 - free-frames 56702
+[prnt] - after wait - free frames change to orignial number - free-frames 56772

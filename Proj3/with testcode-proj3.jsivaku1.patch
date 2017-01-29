@@ -1,0 +1,665 @@
+diff -uNr cs550-16s-proj3-base/defs.h cs550-16s-proj3-working/defs.h
+--- cs550-16s-proj3-base/defs.h	2016-04-10 10:20:41.000000000 -0400
++++ cs550-16s-proj3-working/defs.h	2016-04-21 09:25:38.000000000 -0400
+@@ -118,6 +118,9 @@
+ int             wait(void);
+ void            wakeup(void*);
+ void            yield(void);
++int             clone(void*(*fn)(void*),void*,void*);
++void            t_exit(void*);
++void             join(int,void**,void**);
+ 
+ // swtch.S
+ void            swtch(struct context**, struct context*);
+diff -uNr cs550-16s-proj3-base/Makefile cs550-16s-proj3-working/Makefile
+--- cs550-16s-proj3-base/Makefile	2016-04-10 10:56:46.000000000 -0400
++++ cs550-16s-proj3-working/Makefile	2016-04-21 09:44:22.000000000 -0400
+@@ -51,7 +51,7 @@
+ endif
+ 
+ # If the makefile can't find QEMU, specify its path here
+-# QEMU = qemu-system-i386
++QEMU = ~zhangy/t_bin/qemu-system-i386
+ 
+ # Try to infer the correct QEMU
+ ifndef QEMU
+@@ -173,6 +173,7 @@
+ 	_wc\
+ 	_zombie\
+ 	_shutdown \
++	_proj3_tlibtest \
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff -uNr cs550-16s-proj3-base/Makefile.rej cs550-16s-proj3-working/Makefile.rej
+--- cs550-16s-proj3-base/Makefile.rej	1969-12-31 19:00:00.000000000 -0500
++++ cs550-16s-proj3-working/Makefile.rej	2016-04-21 10:46:36.029050478 -0400
+@@ -0,0 +1,11 @@
++--- Makefile	2015-01-27 16:35:49.000000000 -0500
+++++ Makefile	2015-01-27 21:11:34.102845652 -0500
++@@ -51,7 +51,7 @@
++ endif
++ 
++ # If the makefile can't find QEMU, specify its path here
++-# QEMU = qemu-system-i386
+++QEMU = ~zhangy/t_bin/qemu-system-i386
++ 
++ # Try to infer the correct QEMU
++ ifndef QEMU
+diff -uNr cs550-16s-proj3-base/proc.c cs550-16s-proj3-working/proc.c
+--- cs550-16s-proj3-base/proc.c	2016-04-10 10:20:41.000000000 -0400
++++ cs550-16s-proj3-working/proc.c	2016-04-21 11:32:36.365773709 -0400
+@@ -69,8 +69,10 @@
+   p->context = (struct context*)sp;
+   memset(p->context, 0, sizeof *p->context);
+   p->context->eip = (uint)forkret;
+-
+-  return p;
++ 
++ p->is_thread=0;
++ 
++ return p;
+ }
+ 
+ //PAGEBREAK: 32
+@@ -224,7 +226,7 @@
+     // Scan through table looking for zombie children.
+     havekids = 0;
+     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+-      if(p->parent != proc)
++      if(p->parent != proc || p->is_thread==1)
+         continue;
+       havekids = 1;
+       if(p->state == ZOMBIE){
+@@ -232,7 +234,7 @@
+         pid = p->pid;
+         kfree(p->kstack);
+         p->kstack = 0;
+-        freevm(p->pgdir);
++//        freevm(p->pgdir);
+         p->state = UNUSED;
+         p->pid = 0;
+         p->parent = 0;
+@@ -266,7 +268,7 @@
+ scheduler(void)
+ {
+   struct proc *p;
+-  int ran = 0; // CS550: to solve the 100%-CPU-utilization-when-idling problem
++//  int ran = 0; // CS550: to solve the 100%-CPU-utilization-when-idling problem
+ 
+   for(;;){
+     // Enable interrupts on this processor.
+@@ -274,12 +276,12 @@
+ 
+     // Loop over process table looking for process to run.
+     acquire(&ptable.lock);
+-    ran = 0;
++//    ran = 0;
+     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+       if(p->state != RUNNABLE)
+         continue;
+ 
+-      ran = 1;
++  //    ran = 1;
+       
+       // Switch to chosen process.  It is the process's job
+       // to release ptable.lock and then reacquire it
+@@ -296,9 +298,9 @@
+     }
+     release(&ptable.lock);
+ 
+-    if (ran == 0){
+-        halt();
+-    }
++    //if (ran == 0){
++      //  halt();
++    //}
+   }
+ }
+ 
+@@ -471,3 +473,115 @@
+     cprintf("\n");
+   }
+ }
++
++int clone(void*(*fn)(void*), void* stack,void* arg)
++{
++  int i, pid;
++  struct proc *np;
++  uint stack_size = 4096;
++        // Allocate process.
++        if((np = allocproc()) == 0)
++                return -1;
++
++        np->pgdir = proc->pgdir;
++        np->sz = proc->sz;
++        np->parent = proc;
++        *np->tf = *proc->tf;
++        np->stack = stack;
++        np->is_thread=1;
++        //Push args on stack
++
++        void * stackArg, *stackRet;
++        stackRet = stack + stack_size -2* sizeof(void *);
++        *(uint*)stackRet = 0xffffffff;
++        stackArg = stack + stack_size - sizeof(void *);
++        *(uint*)stackArg = (uint)arg;
++
++        //Change stack pointer to point to stack
++        np->tf->esp = (int) stack;
++        np->tf->esp += stack_size -2*sizeof(void*) ;
++        np->tf->ebp = np->tf->esp;// + 2*sizeof(void*) ;
++        //Set instruction pointer to the address of the function
++        np->tf->eip = (int) fn;
++        for(i = 0; i < NOFILE; i++)
++        if(proc->ofile[i])
++        np->ofile[i] = filedup(proc->ofile[i]);
++        np->cwd = idup(proc->cwd);
++        pid = np->pid;
++        np->tf->eax = 0;
++        np->state = RUNNABLE;
++        safestrcpy(np->name, proc->name, sizeof(proc->name));
++        return pid;
++}
++void join(int tid, void** ret_p,void ** stack) {
++   struct proc *p;
++  int havekids;
++  acquire(&ptable.lock);
++  for(;;){
++    havekids = 0;
++    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
++        if(p->pid != tid)
++                continue;
++      havekids = 1;
++      if(p->state == ZOMBIE){
++        *ret_p = (void *)p->tf->eax;
++        // Found one.
++        kfree(p->kstack);
++        p->kstack = 0;
++
++        *stack = (void *)p->stack;
++        p->state = UNUSED;
++        p->pid = 0;
++        p->parent = 0;
++        p->name[0] = 0;
++        p->killed = 0;
++        release(&ptable.lock);
++        return;
++      }
++    }
++    // No point waiting if we don't have any children.
++    if(!havekids || proc->killed){
++      release(&ptable.lock);
++      return;
++    }
++    sleep(proc, &ptable.lock);  //DOC: wait-sleep
++  }
++}
++void t_exit(void* retval) {
++
++  struct proc *p;
++  int fd;
++  if(proc == initproc)
++    panic("init exiting");
++
++  // Close all open files.
++  for(fd = 0; fd < NOFILE; fd++){
++    if(proc->ofile[fd]){
++      fileclose(proc->ofile[fd]);
++      proc->ofile[fd] = 0;
++    }
++  }
++  proc->tf->eax =(uint)retval;
++  begin_op();
++  iput(proc->cwd);
++  end_op();
++  proc->cwd = 0;
++
++  acquire(&ptable.lock);
++
++  // Parent might be sleeping in wait().
++  wakeup1(proc->parent);
++
++  // Pass abandoned children to init.
++  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
++    if(p->parent == proc){
++      p->parent = initproc;
++      if(p->state == ZOMBIE)
++        wakeup1(initproc);
++    }
++  }
++  // Jump into the scheduler, never to return.
++  proc->state = ZOMBIE;
++  sched();
++  panic("zombie exit");
++}
+diff -uNr cs550-16s-proj3-base/proc.h cs550-16s-proj3-working/proc.h
+--- cs550-16s-proj3-base/proc.h	2016-04-10 10:20:41.000000000 -0400
++++ cs550-16s-proj3-working/proc.h	2016-04-21 09:34:01.000000000 -0400
+@@ -66,6 +66,9 @@
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++void* stack;
++ void*   retval;                // pointer to thread's return value
++  int is_thread;
+ };
+ 
+ // Process memory is laid out contiguously, low addresses first:
+diff -uNr cs550-16s-proj3-base/proj3_tlibtest.c cs550-16s-proj3-working/proj3_tlibtest.c
+--- cs550-16s-proj3-base/proj3_tlibtest.c	1969-12-31 19:00:00.000000000 -0500
++++ cs550-16s-proj3-working/proj3_tlibtest.c	2016-04-21 09:48:02.000000000 -0400
+@@ -0,0 +1,227 @@
++#include "types.h"
++#include "user.h"
++#include "xthread.h"
++
++int count = 0;
++
++void usage(void)
++{
++    printf(1, "Usage: proj3_tlibtest test-case-# (1-4)\n");
++}
++
++void add_then_exit(int a, int b)
++{
++    int n = a + b;
++    xthread_exit((void *)n);
++}
++
++
++
++/***************************** TEST CASE 1 *********************************
++The expected output would look like (depending how threads are scheduled, the outputs may be mixed up a little bit):
++
++-------------------- TEST CASE 1 --------------------
++Printing in CHILD1 thread: completed!
++Printing in CHILD2 thread: completed!
++Printing in MAIN thread: count=3$ 
++****************************************************************************/
++void * tc1_func(void * arg)
++{
++    count++;
++    printf(1, "Printing in %s thread: completed!\n", (char *)arg);
++    return (void *)0;
++}
++
++void tc1(void)
++{
++    int tid_1 = 0, tid_2 = 0;
++
++    printf(1, "\n-------------------- TEST CASE 1 --------------------\n");
++    count = 0;
++    xthread_create(&tid_1, tc1_func, (void *)"CHILD1");
++    xthread_create(&tid_2, tc1_func, (void *)"CHILD2");
++    count++;
++    sleep(100); // 1 second
++    printf(1, "Printing in MAIN thread: count=%d\n", count);
++}
++
++
++/***************************** TEST CASE 2 *********************************
++The expected output would look like (depending how the threads are scheduled, the outputs may be mixed up a little bit):
+++
+++-------------------- TEST CASE 2 --------------------
+++Printing in MAIN thread: completed!
+++$ Printing in CHILD1 thread: count=3
+++Printing in CHILD2 thread: count=3
+++****************************************************************************/
++void * tc2_func(void * arg)
++{
++   count++;
++   sleep(100); // 1 second
++   printf(1, "Printing in %s thread: count=%d\n", (char *)arg, count);
++   return (void *)0;
++}
++
++void tc2(void)
++{
++    int tid_1 = 0, tid_2 = 0;
++
++    printf(1, "\n-------------------- TEST CASE 2 --------------------\n");
++    count = 0;
++    xthread_create(&tid_1, tc2_func, (void *)"CHILD1");
++    xthread_create(&tid_2, tc2_func, (void *)"CHILD2");
++    count++;
++    printf(1, "Printing in MAIN thread: completed!\n");
++}
++
++
++
++/***************************** TEST CASE 3 *********************************
+++The expected output will look like:
+++
+++-------------------- TEST CASE 3 --------------------
+++Thread 46 returned 0x12345.
+++Thread 47 returned 33.
+++* ***************************************************************************/
++void * tc3_func1(void * arg)
++{
++    return (void *)0x12345;
++}
++
++void * tc3_func2(void * arg)
++{
++    add_then_exit(11, 22);
++    return (void *)0;
++}
++
++void tc3(void)
++{
++    int tid_1, tid_2;
++    void * ret_val;
++    
++    printf(1, "\n-------------------- TEST CASE 3 --------------------\n");
++    xthread_create(&tid_1, tc3_func1, (void *)0);
++    xthread_create(&tid_2, tc3_func2, (void *)0);
++
++    sleep(100); // 1 second
++
++    xthread_join(tid_1, &ret_val);
++    printf(1, "Thread %d returned 0x%x.\n", tid_1, (uint)ret_val);
++
++    xthread_join(tid_2, &ret_val);
++    printf(1, "Thread %d returned %d.\n", tid_2, (uint)ret_val);      
++}
++
++
++
++/***************************** TEST CASE 4  *********************************
+++The expected output would will like:
+++
+++-------------------- TEST CASE 4 --------------------
+++Thread 53 returned 0x12345.
+++Thread 54 returned 33.
+++* ***************************************************************************/
++void * tc4_func1(void * arg)
++{
++    sleep(100); // 1 second
++    return (void *)0x12345;
++}
++
++void * tc4_func2(void * arg)
++{
++    sleep(200); // 2 seconds
++    add_then_exit(11, 22);
++    return (void *)0;
++}
++
++void tc4(void)
++{
++    int tid_1, tid_2;
++    void * ret_val;
++    
++    printf(1, "\n-------------------- TEST CASE 4 --------------------\n");
++    xthread_create(&tid_1, tc4_func1, (void *)0);
++    xthread_create(&tid_2, tc4_func2, (void *)0);
++
++    xthread_join(tid_1, &ret_val);
++    printf(1, "Thread %d returned 0x%x.\n", tid_1, (uint)ret_val);
++
++    xthread_join(tid_2, &ret_val);
++    printf(1, "Thread %d returned %d.\n", tid_2, (uint)ret_val);      
++}
++
++
++
++/***************************** TEST CASE 5  *********************************
+++The expected output would will like:
+++
+++-------------------- TEST CASE 5 --------------------
+++ptr1 - ptr2 = 16
+++****************************************************************************/
++void * tc5_func(void * arg)
++{
++    sleep(100); // 1 second
++    add_then_exit(0, 0);
++    return (void *)0;
++}
++
++void tc5(void)
++{
++    int tid;
++    void * ret_val;
++    void * ptr1 = (void *)0, * ptr2 = (void *)0;
++
++
++    printf(1, "\n-------------------- TEST CASE 5 --------------------\n");
++    ptr1 = malloc(1);
++    xthread_create(&tid, tc5_func, (void *)0);
++    xthread_join(tid, &ret_val);
++    ptr2 = malloc(1);
++    printf(1, "ptr1 - ptr2 = %d\n", ptr1 - ptr2);      
++
++    if (ptr1)
++        free(ptr1);
++    if (ptr2)
++        free(ptr2);    
++}
++
++
++/************************** main() *****************************/
++int main(int argc, char *argv[])
++{ 
++    if (argc < 2)
++    {
++        usage();
++        exit();
++    }
++
++    switch (argv[1][0])
++    {
++        case '1':
++            tc1();
++            break;
++
++        case '2':
++            tc2();
++            break;
++
++        case '3':
++            tc3();
++            break;
++
++        case '4':
++            tc4();
++            break;
++
++        case '5':
++            tc5();
++            break;
++
++        default:
++            printf(1, "No such test case (%c).\n", argv[1][0]);
++            usage();
++            break;
++    }
++
++    exit();
++}
+diff -uNr cs550-16s-proj3-base/shutdown.c cs550-16s-proj3-working/shutdown.c
+--- cs550-16s-proj3-base/shutdown.c	2016-03-02 16:33:22.000000000 -0500
++++ cs550-16s-proj3-working/shutdown.c	2016-04-21 11:35:51.690723136 -0400
+@@ -17,5 +17,5 @@
+ {
+     printf(1, "BYE~\n");
+     shutdown();
+-    exit(); // return 0;
++    exit(); //return 0;
+ }
+diff -uNr cs550-16s-proj3-base/syscall.c cs550-16s-proj3-working/syscall.c
+--- cs550-16s-proj3-base/syscall.c	2016-04-10 10:55:48.000000000 -0400
++++ cs550-16s-proj3-working/syscall.c	2016-04-21 11:23:15.418605847 -0400
+@@ -99,6 +99,10 @@
+ extern int sys_write(void);
+ extern int sys_uptime(void);
+ 
++extern int sys_clone(void);
++extern int sys_join(void);
++extern int sys_t_exit(void);
++
+ extern int sys_shutdown(void);
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -123,6 +127,10 @@
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
+ [SYS_shutdown]      sys_shutdown,
++
++[SYS_clone]   sys_clone,
++[SYS_join]       sys_join,
++[SYS_t_exit]       sys_t_exit,
+ };
+ 
+ void
+diff -uNr cs550-16s-proj3-base/syscall.h cs550-16s-proj3-working/syscall.h
+--- cs550-16s-proj3-base/syscall.h	2016-04-10 10:55:54.000000000 -0400
++++ cs550-16s-proj3-working/syscall.h	2016-04-21 11:22:46.727057424 -0400
+@@ -21,3 +21,7 @@
+ #define SYS_mkdir  20
+ #define SYS_close  21
+ #define SYS_shutdown     23
++
++#define SYS_clone  24
++#define SYS_join 25
++#define SYS_t_exit 26
+diff -uNr cs550-16s-proj3-base/sysproc.c cs550-16s-proj3-working/sysproc.c
+--- cs550-16s-proj3-base/sysproc.c	2016-04-10 10:55:59.000000000 -0400
++++ cs550-16s-proj3-working/sysproc.c	2016-04-21 09:40:54.000000000 -0400
+@@ -14,6 +14,42 @@
+ }
+ 
+ int
++sys_clone(void) {
++        char* start_routine;
++        char* stack;
++        char* arg;
++        if(argptr(0, &start_routine,sizeof(void*)) < 0)
++                return -1;
++        if(argptr(1, &stack,sizeof(void*)) < 0)
++                return -1;
++        if (argptr(2,&arg,sizeof(void*)) < 0)
++                return -1;
++        return clone((void*)start_routine,(void*)stack,(void *)arg);
++}
++void
++sys_join(void) {
++        void** ret_p;
++        int tid;
++        void** stack;
++        if (argint(0,&tid) < 0)
++                return;
++        if (argptr(1,(void*)&ret_p,sizeof(void*)) < 0)
++                return;
++        if(argptr(2, (void*)&stack, sizeof(void *)) < 0){
++                return;
++        }
++        join(tid,ret_p,stack);
++}
++void
++sys_t_exit(void) {
++       void* retval;
++        if (argptr(0,(void*)&retval,sizeof(retval)) < 0) {
++                return;
++        }
++        t_exit(retval);
++}
++
++int
+ sys_exit(void)
+ {
+   exit();
+diff -uNr cs550-16s-proj3-base/trap.c cs550-16s-proj3-working/trap.c
+--- cs550-16s-proj3-base/trap.c	2016-04-10 10:20:41.000000000 -0400
++++ cs550-16s-proj3-working/trap.c	2016-04-21 11:22:06.831685306 -0400
+@@ -32,6 +32,8 @@
+   lidt(idt, sizeof(idt));
+ }
+ 
++extern uint rval;
++
+ //PAGEBREAK: 41
+ void
+ trap(struct trapframe *tf)
+@@ -80,6 +82,10 @@
+    
+   //PAGEBREAK: 13
+   default:
++    if(tf->eip == 0xffffffff) {
++          proc->killed = 1;
++          break;
++    }
+     if(proc == 0 || (tf->cs&3) == 0){
+       // In kernel, it must be our mistake.
+       cprintf("unexpected trap %d from cpu %d eip %x (cr2=0x%x)\n",
+diff -uNr cs550-16s-proj3-base/user.h cs550-16s-proj3-working/user.h
+--- cs550-16s-proj3-base/user.h	2016-04-10 10:56:07.000000000 -0400
++++ cs550-16s-proj3-working/user.h	2016-04-21 11:20:58.856755029 -0400
+@@ -24,6 +24,10 @@
+ int sleep(int);
+ int uptime(void);
+ 
++int clone(void*,void*,void*);
++int join(int, void**,void**);
++int t_exit(void*);
++
+ // ulib.c
+ int stat(char*, struct stat*);
+ char* strcpy(char*, char*);
+diff -uNr cs550-16s-proj3-base/usys.S cs550-16s-proj3-working/usys.S
+--- cs550-16s-proj3-base/usys.S	2016-04-10 10:56:14.000000000 -0400
++++ cs550-16s-proj3-working/usys.S	2016-04-21 11:20:39.857054011 -0400
+@@ -30,3 +30,7 @@
+ SYSCALL(sleep)
+ SYSCALL(uptime)
+ SYSCALL(shutdown)
++
++SYSCALL(clone)
++SYSCALL(join)
++SYSCALL(t_exit)
+diff -uNr cs550-16s-proj3-base/xthread.c cs550-16s-proj3-working/xthread.c
+--- cs550-16s-proj3-base/xthread.c	2016-04-10 10:56:40.000000000 -0400
++++ cs550-16s-proj3-working/xthread.c	2016-04-21 09:53:13.000000000 -0400
+@@ -6,19 +6,23 @@
+ void xthread_create(int * tid, void * (* start_routine)(void *), void * arg)
+ {
+     // add your implementation here ...
+-    
++	char* stack = malloc(4096);
++       *tid = clone(start_routine, stack, arg);  
++       return;    
+ }
+ 
+ 
+ void xthread_exit(void * ret_val_p)
+ {
+     // add your implementation here ...
+-    
++    t_exit(ret_val_p); 
+ }
+ 
+ 
+ void xthread_join(int tid, void ** retval)
+ {
+     // add your implementation here ...
+-    
++    void* stack;
++    join(tid,retval,&stack);
++    free(stack);
+ }
+diff -uNr cs550-16s-proj3-base/xv6-cs550-Makefile.patch cs550-16s-proj3-working/xv6-cs550-Makefile.patch
+--- cs550-16s-proj3-base/xv6-cs550-Makefile.patch	1969-12-31 19:00:00.000000000 -0500
++++ cs550-16s-proj3-working/xv6-cs550-Makefile.patch	2016-02-09 08:33:17.000000000 -0500
+@@ -0,0 +1,12 @@
++diff -uNr xv6-cs550-base/Makefile xv6-cs550-base_myversion/Makefile
++--- xv6-cs550-base/Makefile	2015-01-27 16:35:49.000000000 -0500
+++++ xv6-cs550-base_myversion/Makefile	2015-01-27 21:11:34.102845652 -0500
++@@ -51,7 +51,7 @@
++ endif
++ 
++ # If the makefile can't find QEMU, specify its path here
++-# QEMU = qemu-system-i386
+++QEMU = ~zhangy/t_bin/qemu-system-i386
++ 
++ # Try to infer the correct QEMU
++ ifndef QEMU

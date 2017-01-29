@@ -1,0 +1,60 @@
+diff -uNr cs550-16s-proj0-base/main.c cs550-16s-proj0-working/main.c
+--- cs550-16s-proj0-base/main.c	2016-02-01 09:13:31.000000000 -0500
++++ cs550-16s-proj0-working/main.c	2016-02-05 09:44:56.000000000 -0500
+@@ -55,7 +55,12 @@
+ static void
+ mpmain(void)
+ {
++  //Flag variable for printing the message only once in the kernal space
++  static int count = 1;	//Flag variable
+   cprintf("cpu%d: starting\n", cpu->id);
++  if(count == 1) //Print only if the count is one and print the message only once
++  	cprintf("CS550 proj0 printing in kernel space\n");
++  count = 0;	//Making flag 0 so that another time it won't be printed
+   idtinit();       // load idt register
+   xchg(&cpu->started, 1); // tell startothers() we're up
+   scheduler();     // start running processes
+diff -uNr cs550-16s-proj0-base/Makefile cs550-16s-proj0-working/Makefile
+--- cs550-16s-proj0-base/Makefile	2016-02-01 09:13:31.000000000 -0500
++++ cs550-16s-proj0-working/Makefile	2016-02-05 09:24:58.000000000 -0500
+@@ -51,7 +51,7 @@
+ endif
+ 
+ # If the makefile can't find QEMU, specify its path here
+-# QEMU = qemu-system-i386
++QEMU = ~zhangy/t_bin/qemu-system-i386
+ 
+ # Try to infer the correct QEMU
+ ifndef QEMU
+@@ -172,7 +172,8 @@
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
+-
++		_proj0\
++	
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+ 
+diff -uNr cs550-16s-proj0-base/proj0.c cs550-16s-proj0-working/proj0.c
+--- cs550-16s-proj0-base/proj0.c	1969-12-31 19:00:00.000000000 -0500
++++ cs550-16s-proj0-working/proj0.c	2016-02-05 09:54:53.000000000 -0500
+@@ -0,0 +1,18 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++int
++main(int argc, char *argv[])
++{
++  //Variable for incrementing the command line arguments
++  int n = 1;
++  printf(1,"CS550 proj0 print in user space: "); // Output as given
++  //Accessing argv contents through loop and printing simply like echo
++  while(n < argc)
++   	{
++	  printf(1, "%s ", argv[n]);
++  	  n++;
++	}
++  printf(1, "\n");
++  exit(); // Exit after execution
++}
